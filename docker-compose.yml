@@ -1,0 +1,15 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # 使用国内镜像源加速（可选，如果已配置Docker daemon镜像加速器可删除此配置）
+      # args:
+      #   - BUILDKIT_INLINE_CACHE=1
+    image: icais2025-ppreview:latest
+    ports:
+      - "${HOST_PORT:-3000}:3000"
+    env_file:
+      - .env
+    restart: unless-stopped
+

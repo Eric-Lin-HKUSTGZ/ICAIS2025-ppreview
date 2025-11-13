@@ -1,0 +1,19 @@
+# HTTP请求库
+requests>=2.31.0
+
+# 数值计算库
+numpy>=1.24.0
+
+# OpenAI API客户端（用于embedding）
+openai>=1.0.0
+
+# FastAPI相关依赖
+fastapi>=0.104.0
+sse-starlette>=1.6.5
+uvicorn>=0.24.0
+pydantic>=2.0.0
+
+# PDF处理库
+pdfplumber>=0.10.0
+PyPDF2>=3.0.0
+
