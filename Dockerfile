@@ -12,7 +12,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
 
 # 复制所有Python模块文件
-COPY main.py .
+COPY api_service.py .
 COPY config.py .
 COPY llm_client.py .
 COPY embedding_client.py .
@@ -26,5 +26,5 @@ COPY prompt_template.py .
 EXPOSE 3000
 
 # 运行API服务
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "3000", "--log-level", "info", "--access-log"]
+CMD ["uvicorn", "api_service:app", "--host", "0.0.0.0", "--port", "3000", "--log-level", "info", "--access-log"]
 

@@ -27,13 +27,14 @@ class PaperAnalyzer:
         self.retriever = retriever
         self.config = Config
 
-    def extract_keywords(self, structured_info: Dict[str, str], timeout: Optional[int] = None) -> List[str]:
+    def extract_keywords(self, structured_info: Dict[str, str], timeout: Optional[int] = None, language: str = 'en') -> List[str]:
         """
         提取论文关键词
         
         Args:
             structured_info: 结构化的论文信息
             timeout: 超时时间（秒）
+            language: 语言，'zh'表示中文，'en'表示英文
         
         Returns:
             关键词列表
@@ -44,21 +45,64 @@ class PaperAnalyzer:
             # 构建结构化信息文本
             info_text = self._format_structured_info(structured_info)
             
-            prompt = get_keyword_extraction_prompt(info_text)
+            prompt = get_keyword_extraction_prompt(info_text, language=language)
             
+            # 使用推理模型进行深度理解，提升关键词提取的准确性
             response = self.llm_client.get_response(
                 prompt,
-                use_reasoning_model=False,
+                use_reasoning_model=True,
                 temperature=0.3,
                 timeout=timeout
             )
             
             # 解析关键词
-            keywords = [kw.strip().lower() for kw in response.split(',')]
-            keywords = [kw for kw in keywords if kw]  # 过滤空字符串
+            import re
+            # 移除可能的前缀提示文本（如"现在请提取关键词："等）
+            response_clean = response.strip()
+            # 查找最后一个冒号或换行符后的内容（通常是实际的关键词列表）
+            if ':' in response_clean:
+                # 尝试找到最后一个冒号后的内容
+                parts = response_clean.split(':')
+                if len(parts) > 1:
+                    response_clean = parts[-1].strip()
+            # 移除可能的前缀文本（如"关键词："、"Keywords:"等）
+            response_clean = re.sub(r'^(关键词|keywords|keyword)[:：]?\s*', '', response_clean, flags=re.IGNORECASE)
+            
+            # 按逗号分割
+            raw_keywords = [kw.strip() for kw in response_clean.split(',')]
+            # 只保留包含英文字母的关键词（过滤掉纯中文或其他非英文内容）
+            keywords = []
+            # 定义一些明显与任务相关的通用词，如果提取到这些词，可能是LLM误解了任务
+            task_related_generic_words = {
+                'keyword extraction', 'keyword', 'keywords', 'extraction',
+                'natural language processing', 'nlp', 'text mining', 'text analysis',
+                'information retrieval', 'information extraction', 'data mining'
+            }
+            
+            for kw in raw_keywords:
+                kw_lower = kw.lower().strip()
+                # 只保留包含至少一个英文字母的关键词
+                if kw_lower and re.search(r'[a-zA-Z]', kw_lower):
+                    # 提取英文部分（去除可能的中文说明）
+                    english_part = re.sub(r'[^\x00-\x7F]+', '', kw_lower).strip()
+                    # 移除可能的标点符号
+                    english_part = re.sub(r'^[^\w]+|[^\w]+$', '', english_part)
+                    if english_part:
+                        # 检查是否是任务相关的通用词（如果只有这些词，可能是误解了任务）
+                        # 但如果关键词列表中有其他具体词，保留这些词作为备选
+                        keywords.append(english_part)
             
             # 限制关键词数量
-            keywords = keywords[:5]
+            keywords = keywords[:4]
+            
+            # 如果提取到的关键词都是任务相关的通用词，说明LLM可能误解了任务，使用备用方法
+            if keywords and all(kw in task_related_generic_words for kw in keywords):
+                print(f"⚠️  检测到可能提取了任务相关的通用词: {keywords}，使用备用方法重新提取")
+                # 使用备用方法从论文内容中提取关键词
+                fallback_keywords = self._extract_fallback_keywords(structured_info)
+                if fallback_keywords:
+                    return fallback_keywords
+                # 如果备用方法也失败，返回原始关键词（总比没有好）
             
             return keywords if keywords else []
         except Exception as e:
@@ -67,22 +111,51 @@ class PaperAnalyzer:
             return self._extract_fallback_keywords(structured_info)
 
     def _extract_fallback_keywords(self, structured_info: Dict[str, str]) -> List[str]:
-        """备用关键词提取方法"""
+        """备用关键词提取方法 - 只提取英文关键词（用于论文检索）"""
+        import re
         keywords = []
         
-        # 从Keywords字段提取
+        # 从Keywords字段提取（优先）
         if "Keywords" in structured_info:
             kw_text = structured_info["Keywords"]
-            keywords.extend([kw.strip().lower() for kw in kw_text.split(',')[:3]])
+            # 支持中英文关键词，按逗号、分号或空格分隔
+            kw_list = re.split(r'[,;，；\s]+', kw_text)
+            # 只保留英文关键词（包含至少一个英文字母）
+            english_kws = [kw.strip().lower() for kw in kw_list if kw.strip() and re.search(r'[a-zA-Z]', kw.strip())]
+            keywords.extend(english_kws[:3])
         
-        # 从Title提取
-        if "Title" in structured_info:
+        # 从Abstract提取英文关键词（优先于Title，因为Abstract通常包含更多技术术语）
+        if "Abstract" in structured_info:
+            abstract = structured_info["Abstract"]
+            # 提取英文单词（至少4个字符，排除停用词）
+            words = re.findall(r'\b[a-zA-Z]{4,}\b', abstract.lower())
+            stop_words = {'this', 'that', 'these', 'those', 'with', 'from', 'have', 'been', 'will', 'would', 'could', 'should', 'might', 'must', 'paper', 'study', 'research', 'method', 'approach', 'propose', 'present', 'show', 'demonstrate', 'result', 'experiment', 'evaluation', 'performance', 'improve', 'better', 'compared', 'previous', 'existing', 'novel', 'new', 'using', 'based', 'through', 'which', 'where', 'while', 'when', 'their', 'there', 'these', 'those'}
+            words = [w for w in words if w not in stop_words]
+            # 优先选择较长的词（通常是技术术语）
+            words = sorted(words, key=len, reverse=True)
+            keywords.extend(words[:3])
+        
+        # 从Title提取（如果关键词还不够）
+        if len(keywords) < 2 and "Title" in structured_info:
             title = structured_info["Title"]
-            # 简单提取：取前几个重要词
-            words = title.lower().split()[:3]
-            keywords.extend(words)
+            # 只提取英文单词
+            words = re.findall(r'\b[a-zA-Z]{4,}\b', title.lower())
+            stop_words = {'this', 'that', 'with', 'from', 'paper', 'study', 'research', 'method', 'approach', 'novel', 'new', 'using', 'based'}
+            words = [w for w in words if w not in stop_words]
+            keywords.extend(words[:2])
         
-        return list(set(keywords))[:5]  # 去重并限制数量
+        # 如果还是没有足够的关键词，尝试从Abstract提取更多
+        if len(keywords) < 2 and "Abstract" in structured_info:
+            abstract = structured_info["Abstract"]
+            # 提取所有英文单词（至少3个字符）
+            words = re.findall(r'\b[a-zA-Z]{3,}\b', abstract.lower())
+            stop_words = {'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'her', 'was', 'one', 'our', 'out', 'day', 'get', 'has', 'him', 'his', 'how', 'its', 'may', 'new', 'now', 'old', 'see', 'two', 'way', 'who', 'boy', 'did', 'its', 'let', 'put', 'say', 'she', 'too', 'use', 'this', 'that', 'with', 'from', 'have', 'been', 'will', 'would', 'could', 'should', 'might', 'must', 'paper', 'study', 'research', 'method', 'approach', 'propose', 'present', 'show', 'demonstrate', 'result', 'experiment', 'evaluation', 'performance', 'improve', 'better', 'compared', 'previous', 'existing', 'novel', 'new', 'using', 'based', 'through', 'which', 'where', 'while', 'when', 'their', 'there', 'these', 'those'}
+            words = [w for w in words if w not in stop_words]
+            keywords.extend(words[:2])
+        
+        # 去重并限制数量（最多4个）
+        keywords = list(dict.fromkeys(keywords))[:4]  # 使用dict.fromkeys保持顺序并去重
+        return keywords
 
     def build_query(self, keywords: List[str], structured_info: Dict[str, str]) -> str:
         """
@@ -183,7 +256,7 @@ class PaperAnalyzer:
             print(f"⚠️  语义相似度计算失败: {e}")
             return [(paper, 0.0) for paper in related_papers]
 
-    def analyze_innovation(self, structured_info: Dict[str, str], related_papers: List[Dict], timeout: Optional[int] = None) -> str:
+    def analyze_innovation(self, structured_info: Dict[str, str], related_papers: List[Dict], timeout: Optional[int] = None, language: str = 'en') -> str:
         """
         分析创新点
         
@@ -191,6 +264,7 @@ class PaperAnalyzer:
             structured_info: 结构化的论文信息
             related_papers: 相关论文列表
             timeout: 超时时间（秒）
+            language: 语言，'zh'表示中文，'en'表示英文
         
         Returns:
             创新点分析文本
@@ -202,7 +276,7 @@ class PaperAnalyzer:
             info_text = self._format_structured_info(structured_info)
             related_text = self._format_related_papers(related_papers)
             
-            prompt = get_innovation_analysis_prompt(info_text, related_text)
+            prompt = get_innovation_analysis_prompt(info_text, related_text, language=language)
             
             response = self.llm_client.get_response(
                 prompt,
@@ -214,7 +288,10 @@ class PaperAnalyzer:
             return response
         except Exception as e:
             print(f"⚠️  创新点分析失败: {e}")
-            return f"创新点分析失败: {str(e)}"
+            if language == 'zh':
+                return f"创新点分析失败: {str(e)}"
+            else:
+                return f"Innovation analysis failed: {str(e)}"
 
     def _format_structured_info(self, structured_info: Dict[str, str]) -> str:
         """格式化结构化信息为文本"""

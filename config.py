@@ -32,7 +32,7 @@ class Config(metaclass=ConfigMeta):
         elif name == "LLM_API_KEY":
             return cls._get_env_with_fallback("SCI_MODEL_API_KEY", "LLM_API_KEY")
         elif name == "LLM_MODEL":
-            return cls._get_env_with_fallback("SCI_LLM_MODEL", "LLM_MODEL", "deepseek-ai/DeepSeek-V3")
+            return cls._get_env_with_fallback("SCI_LLM_MODEL", "LLM_MODEL", "xxx")
         elif name == "LLM_REASONING_MODEL":
             reasoning_model = cls._get_env("SCI_LLM_REASONING_MODEL")
             if not reasoning_model:
@@ -65,7 +65,11 @@ class Config(metaclass=ConfigMeta):
         
         # Embedding配置
         elif name == "EMBEDDING_MODEL_NAME":
-            return cls._get_env_with_fallback("SCI_EMBEDDING_MODEL", "EMBEDDING_MODEL_NAME", "text-embedding-v4")
+            return cls._get_env_with_fallback("SCI_EMBEDDING_MODEL", "EMBEDDING_MODEL_NAME", "xxx")
+        elif name == "EMBEDDING_API_ENDPOINT":
+            return cls._get_env_with_fallback("SCI_EMBEDDING_BASE_URL", "EMBEDDING_API_ENDPOINT")
+        elif name == "EMBEDDING_API_KEY":
+            return cls._get_env_with_fallback("SCI_EMBEDDING_API_KEY", "EMBEDDING_API_KEY")
         elif name == "EMBEDDING_DEVICE":
             return cls._get_env("EMBEDDING_DEVICE", "cpu")
         
@@ -73,9 +77,9 @@ class Config(metaclass=ConfigMeta):
         elif name == "REVIEW_TIMEOUT":
             return int(cls._get_env("REVIEW_TIMEOUT", "1200"))  # 20分钟总超时
         elif name == "PDF_PARSE_TIMEOUT":
-            return int(cls._get_env("PDF_PARSE_TIMEOUT", "120"))  # 2分钟
+            return int(cls._get_env("PDF_PARSE_TIMEOUT", "180"))  # 3分钟（因为使用reasoner模型需要更长时间）
         elif name == "KEY_EXTRACTION_TIMEOUT":
-            return int(cls._get_env("KEY_EXTRACTION_TIMEOUT", "60"))  # 1分钟
+            return int(cls._get_env("KEY_EXTRACTION_TIMEOUT", "120"))  # 2分钟（因为使用reasoner模型需要更长时间）
         elif name == "RETRIEVAL_TIMEOUT":
             return int(cls._get_env("RETRIEVAL_TIMEOUT", "180"))  # 3分钟
         elif name == "SEMANTIC_ANALYSIS_TIMEOUT":

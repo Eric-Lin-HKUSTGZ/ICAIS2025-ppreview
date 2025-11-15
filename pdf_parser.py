@@ -74,13 +74,14 @@ class PDFParser:
         except Exception as e:
             raise ValueError(f"PDF文本提取失败: {e}")
 
-    def parse_pdf_structure(self, pdf_text: str, timeout: Optional[int] = None) -> Dict[str, str]:
+    def parse_pdf_structure(self, pdf_text: str, timeout: Optional[int] = None, language: str = 'en') -> Dict[str, str]:
         """
         使用LLM解析PDF结构化信息
         
         Args:
             pdf_text: PDF文本内容
             timeout: 超时时间（秒）
+            language: 语言，'zh'表示中文，'en'表示英文
         
         Returns:
             结构化的论文信息字典
@@ -93,12 +94,12 @@ class PDFParser:
             if len(pdf_text) > max_text_length:
                 pdf_text = pdf_text[:max_text_length] + "\n\n[Text truncated due to length...]"
             
-            prompt = get_pdf_parse_prompt(pdf_text)
+            prompt = get_pdf_parse_prompt(pdf_text, language=language)
             
-            # 使用普通模型进行快速解析
+            # 使用推理模型进行深度解析，提升结构化信息提取的准确性
             response = self.llm_client.get_response(
                 prompt,
-                use_reasoning_model=False,
+                use_reasoning_model=True,
                 temperature=0.3,
                 timeout=timeout
             )
@@ -183,13 +184,14 @@ class PDFParser:
         
         return structured_info
 
-    def parse(self, base64_pdf: str, timeout: Optional[int] = None) -> Dict[str, str]:
+    def parse(self, base64_pdf: str, timeout: Optional[int] = None, language: str = 'en') -> Dict[str, str]:
         """
         完整的PDF解析流程
         
         Args:
             base64_pdf: Base64编码的PDF字符串
             timeout: 超时时间（秒）
+            language: 语言，'zh'表示中文，'en'表示英文
         
         Returns:
             结构化的论文信息字典
@@ -202,7 +204,7 @@ class PDFParser:
             pdf_text = self.extract_text_from_pdf(pdf_bytes)
             
             # 3. 结构化解析
-            structured_info = self.parse_pdf_structure(pdf_text, timeout)
+            structured_info = self.parse_pdf_structure(pdf_text, timeout, language=language)
             
             # 添加原始文本（截断）
             structured_info["raw_text"] = pdf_text[:10000]  # 保留前10000字符
