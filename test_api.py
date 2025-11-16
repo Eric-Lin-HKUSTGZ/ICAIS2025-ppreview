@@ -13,25 +13,25 @@ import argparse
 from pathlib import Path
 
 
-def read_base64_from_txt(txt_path: str) -> str:
+def pdf_to_base64(pdf_path: str) -> str:
     """
-    从txt文件中读取Base64编码的字符串。
+    读取PDF文件并转换为Base64编码的字符串。
 
     Args:
-        txt_path: txt文件的路径。
+        pdf_path: PDF文件的路径。
 
     Returns:
         Base64 编码的字符串。
     """
     try:
-        with open(txt_path, 'r', encoding='utf-8') as txt_file:
-            base64_content = txt_file.read().strip()
-        return base64_content
+        with open(pdf_path, "rb") as f:
+            pdf_base64 = base64.b64encode(f.read()).decode('utf-8')
+        return pdf_base64
     except FileNotFoundError:
-        print(f"❌ 错误：找不到文件 {txt_path}")
+        print(f"❌ 错误：找不到文件 {pdf_path}")
         return ""
     except Exception as e:
-        print(f"❌ 错误：读取文件时出现问题 - {e}")
+        print(f"❌ 错误：读取PDF文件时出现问题 - {e}")
         return ""
 
 
@@ -74,7 +74,7 @@ def parse_sse_line(line: str) -> dict:
 
 def test_paper_review_api(
     api_url: str,
-    txt_path: str,
+    pdf_path: str,
     query: str = "Please review this paper",
     output_file: str = None,
     debug: bool = False
@@ -84,23 +84,32 @@ def test_paper_review_api(
     
     Args:
         api_url: API端点URL
-        txt_path: 包含base64编码的txt文件路径
+        pdf_path: PDF文件路径
         query: 查询字符串
         output_file: 输出文件路径（可选，如果提供则保存完整响应）
+        debug: 是否启用调试模式
     """
-    print(f"📄 测试文件: {txt_path}")
+    print(f"📄 测试文件: {pdf_path}")
     print(f"🔗 API端点: {api_url}")
     print(f"❓ 查询: {query}")
     print("-" * 80)
     
-    # 1. 从txt文件读取base64内容
-    print("📖 正在读取base64编码文件...")
-    base64_content = read_base64_from_txt(txt_path)
+    # 1. 读取PDF文件并转换为base64
+    print("📖 正在读取PDF文件并转换为Base64...")
+    base64_content = pdf_to_base64(pdf_path)
     if not base64_content:
-        print("❌ base64文件读取失败，退出测试")
+        print("❌ PDF文件读取失败，退出测试")
         return
     
-    print(f"✅ base64内容已读取，长度: {len(base64_content)} 字符")
+    # 计算原始PDF文件大小
+    try:
+        pdf_size = os.path.getsize(pdf_path)
+        pdf_size_mb = pdf_size / (1024 * 1024)
+        print(f"✅ PDF文件已读取，文件大小: {pdf_size_mb:.2f} MB")
+    except:
+        pass
+    
+    print(f"✅ Base64编码完成，长度: {len(base64_content)} 字符")
     print("-" * 80)
     
     # 2. 构建请求
@@ -135,9 +144,9 @@ def test_paper_review_api(
             print(f"⚠️ 警告: 响应Content-Type不是text/event-stream，而是: {content_type}")
         
         # 检查响应头
-        print(f"[DEBUG] 响应状态码: {response.status_code}")
-        print(f"[DEBUG] 响应头 Content-Type: {response.headers.get('Content-Type', 'N/A')}")
-        print(f"[DEBUG] 响应头 Transfer-Encoding: {response.headers.get('Transfer-Encoding', 'N/A')}")
+        # print(f"[DEBUG] 响应状态码: {response.status_code}")
+        # print(f"[DEBUG] 响应头 Content-Type: {response.headers.get('Content-Type', 'N/A')}")
+        # print(f"[DEBUG] 响应头 Transfer-Encoding: {response.headers.get('Transfer-Encoding', 'N/A')}")
         
         # 4. 处理流式响应
         print("\n📥 开始接收流式响应:\n")
@@ -160,7 +169,8 @@ def test_paper_review_api(
                 if not chunk:
                     # 空chunk可能表示流结束，但继续尝试读取
                     if debug_mode:
-                        print("[DEBUG] 收到空chunk，继续等待...")
+                        # print("[DEBUG] 收到空chunk，继续等待...")
+                        pass
                     continue
                 
                 raw_line_count += len(chunk)
@@ -178,16 +188,16 @@ def test_paper_review_api(
                     line_count += 1
                     
                     # 调试：打印前5行处理后的数据（总是打印，帮助定位问题）
-                    if line_count <= 5:
-                        print(f"[DEBUG] 行 {line_count}: {repr(line[:150])}")
+                    # if line_count <= 5:
+                    #     print(f"[DEBUG] 行 {line_count}: {repr(line[:150])}")
                     
                     # 解析SSE数据
                     data = parse_sse_line(line)
                     
                     if data is None:
                         # 如果解析失败，记录前几个失败的行以便调试
-                        if line_count <= 10:
-                            print(f"[DEBUG] 解析失败的行 {line_count}: {repr(line[:200])}")
+                        # if line_count <= 10:
+                        #     print(f"[DEBUG] 解析失败的行 {line_count}: {repr(line[:200])}")
                         continue
                     
                     # 检查是否是结束标记
@@ -209,12 +219,13 @@ def test_paper_review_api(
                             chunk_count += 1
                             
                             # 每100个chunk打印一次调试信息
-                            if chunk_count % 100 == 0:
-                                print(f"\n[DEBUG] 已接收 {chunk_count} 个chunk，总内容长度: {len(full_content)} 字符", end='', flush=True)
+                            # if chunk_count % 100 == 0:
+                            #     print(f"\n[DEBUG] 已接收 {chunk_count} 个chunk，总内容长度: {len(full_content)} 字符", end='', flush=True)
                     else:
                         # 如果解析成功但没有choices，记录前几个以便调试
-                        if line_count <= 10:
-                            print(f"[DEBUG] 解析成功但无choices，行 {line_count}，数据键: {list(data.keys()) if isinstance(data, dict) else type(data)}")
+                        # if line_count <= 10:
+                        #     print(f"[DEBUG] 解析成功但无choices，行 {line_count}，数据键: {list(data.keys()) if isinstance(data, dict) else type(data)}")
+                        pass
                 
                 # 如果收到结束标记，退出循环
                 if done_received:
@@ -223,7 +234,8 @@ def test_paper_review_api(
             # 处理剩余的缓冲区内容
             if buffer.strip() and not done_received:
                 if debug_mode:
-                    print(f"[DEBUG] 剩余缓冲区内容: {repr(buffer)}")
+                    # print(f"[DEBUG] 剩余缓冲区内容: {repr(buffer)}")
+                    pass
                 # 尝试解析剩余内容
                 for line in buffer.split('\n'):
                     line = line.strip()
@@ -236,12 +248,12 @@ def test_paper_review_api(
         
         except KeyboardInterrupt:
             print("\n\n⚠️ 用户中断接收流式响应")
-            print(f"[DEBUG] 已处理行数: {line_count}, 原始字符数: {raw_line_count}, chunk数: {chunk_count}")
+            # print(f"[DEBUG] 已处理行数: {line_count}, 原始字符数: {raw_line_count}, chunk数: {chunk_count}")
         except Exception as parse_error:
             print(f"\n❌ 解析SSE流时出错: {parse_error}")
             import traceback
             traceback.print_exc()
-            print(f"[DEBUG] 已处理行数: {line_count}, 原始字符数: {raw_line_count}, chunk数: {chunk_count}")
+            # print(f"[DEBUG] 已处理行数: {line_count}, 原始字符数: {raw_line_count}, chunk数: {chunk_count}")
             # 尝试读取响应内容以便调试
             try:
                 response.raw.read(1024)
@@ -294,15 +306,15 @@ def test_paper_review_api(
         traceback.print_exc()
 
 
-def list_txt_files(test_pdf_dir: str):
-    """列出test_pdf目录中的所有txt文件（包含base64编码）"""
+def list_pdf_files(test_pdf_dir: str):
+    """列出test_pdf目录中的所有PDF文件"""
     pdf_dir = Path(test_pdf_dir)
     if not pdf_dir.exists():
         print(f"❌ 目录不存在: {test_pdf_dir}")
         return []
     
-    txt_files = list(pdf_dir.glob("*.txt"))
-    return sorted(txt_files)
+    pdf_files = list(pdf_dir.glob("*.pdf"))
+    return sorted(pdf_files)
 
 
 def main():
@@ -312,11 +324,11 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-  # 测试默认txt文件（包含base64编码）
+  # 测试默认PDF文件
   python test_api.py
 
-  # 测试指定txt文件
-  python test_api.py --txt test_pdf/AlphaEvolve.txt
+  # 测试指定PDF文件
+  python test_api.py --pdf test_pdf/attention_is_all_you_need.pdf
 
   # 指定API URL和查询
   python test_api.py --url http://localhost:3000/paper_review --query "Please provide a detailed review"
@@ -334,9 +346,9 @@ def main():
     )
     
     parser.add_argument(
-        "--txt",
+        "--pdf",
         type=str,
-        help="包含base64编码的txt文件路径（相对于test_pdf目录或绝对路径）"
+        help="PDF文件路径（相对于test_pdf目录或绝对路径）"
     )
     
     parser.add_argument(
@@ -355,7 +367,7 @@ def main():
     parser.add_argument(
         "--list",
         action="store_true",
-        help="列出test_pdf目录中的所有txt文件（包含base64编码）"
+        help="列出test_pdf目录中的所有PDF文件"
     )
     
     parser.add_argument(
@@ -370,51 +382,51 @@ def main():
     script_dir = Path(__file__).parent
     test_pdf_dir = script_dir / "test_pdf"
     
-    # 列出txt文件
+    # 列出PDF文件
     if args.list:
-        print("📚 test_pdf目录中的txt文件（包含base64编码）:")
-        txt_files = list_txt_files(str(test_pdf_dir))
-        if txt_files:
-            for i, txt_file in enumerate(txt_files, 1):
-                size_mb = txt_file.stat().st_size / (1024 * 1024)
-                print(f"  {i}. {txt_file.name} ({size_mb:.2f} MB)")
+        print("📚 test_pdf目录中的PDF文件:")
+        pdf_files = list_pdf_files(str(test_pdf_dir))
+        if pdf_files:
+            for i, pdf_file in enumerate(pdf_files, 1):
+                size_mb = pdf_file.stat().st_size / (1024 * 1024)
+                print(f"  {i}. {pdf_file.name} ({size_mb:.2f} MB)")
         else:
-            print("  (无txt文件)")
+            print("  (无PDF文件)")
         return
     
-    # 确定txt文件路径
-    if args.txt:
-        txt_path = Path(args.txt)
-        if not txt_path.is_absolute():
+    # 确定PDF文件路径
+    if args.pdf:
+        pdf_path = Path(args.pdf)
+        if not pdf_path.is_absolute():
             # 相对路径，尝试从test_pdf目录或当前目录查找
-            test_pdf_path = test_pdf_dir / txt_path.name
+            test_pdf_path = test_pdf_dir / pdf_path.name
             if test_pdf_path.exists():
-                txt_path = test_pdf_path
-            elif txt_path.exists():
+                pdf_path = test_pdf_path
+            elif pdf_path.exists():
                 pass  # 使用当前目录下的路径
             else:
-                print(f"❌ 找不到txt文件: {args.txt}")
+                print(f"❌ 找不到PDF文件: {args.pdf}")
                 print(f"   尝试了: {test_pdf_path}")
-                print(f"   尝试了: {txt_path}")
+                print(f"   尝试了: {pdf_path}")
                 return
     else:
-        # 使用默认txt文件（第一个找到的）
-        txt_files = list_txt_files(str(test_pdf_dir))
-        if not txt_files:
-            print(f"❌ test_pdf目录中没有找到txt文件: {test_pdf_dir}")
+        # 使用默认PDF文件（第一个找到的）
+        pdf_files = list_pdf_files(str(test_pdf_dir))
+        if not pdf_files:
+            print(f"❌ test_pdf目录中没有找到PDF文件: {test_pdf_dir}")
             return
-        txt_path = txt_files[0]
-        print(f"ℹ️  未指定txt文件，使用默认文件: {txt_path.name}")
+        pdf_path = pdf_files[0]
+        print(f"ℹ️  未指定PDF文件，使用默认文件: {pdf_path.name}")
     
-    # 检查txt文件是否存在
-    if not txt_path.exists():
-        print(f"❌ txt文件不存在: {txt_path}")
+    # 检查PDF文件是否存在
+    if not pdf_path.exists():
+        print(f"❌ PDF文件不存在: {pdf_path}")
         return
     
     # 运行测试
     test_paper_review_api(
         api_url=args.url,
-        txt_path=str(txt_path),
+        pdf_path=str(pdf_path),
         query=args.query,
         output_file=args.output,
         debug=args.debug

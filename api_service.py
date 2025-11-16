@@ -175,11 +175,11 @@ async def _generate_review_internal(query: str, pdf_content: str) -> AsyncGenera
     start_time = time.time()
     
     try:
-        print(f"[DEBUG] 开始执行论文评阅，query长度: {len(query)}, pdf_content长度: {len(pdf_content)}")
+        # print(f"[DEBUG] 开始执行论文评阅，query长度: {len(query)}, pdf_content长度: {len(pdf_content)}")
         
         # 先检测语言，用于后续消息模板
         language = await asyncio.to_thread(detect_language, query)
-        print(f"[DEBUG] 检测到语言: {'中文' if language == 'zh' else 'English'}")
+        # print(f"[DEBUG] 检测到语言: {'中文' if language == 'zh' else 'English'}")
         
         # 根据语言设置消息模板
         if language == 'zh':
@@ -234,52 +234,52 @@ async def _generate_review_internal(query: str, pdf_content: str) -> AsyncGenera
             }
     
         # 验证配置（不输出）
-        print("[DEBUG] 开始验证配置")
+        # print("[DEBUG] 开始验证配置")
         try:
             config_valid = await asyncio.to_thread(Config.validate_config)
             if not config_valid:
-                print("[DEBUG] 配置验证失败")
+                # print("[DEBUG] 配置验证失败")
                 for chunk in stream_message(msg_templates['error_config']):
                     yield chunk
                 return
-            print("[DEBUG] 配置验证成功")
+            # print("[DEBUG] 配置验证成功")
         except Exception as e:
-            print(f"[DEBUG] 配置验证异常: {e}")
+            # print(f"[DEBUG] 配置验证异常: {e}")
             for chunk in stream_message(msg_templates['error_config_exception'](e)):
                 yield chunk
             return
     
         # 创建组件（不输出初始化信息）
-        print("[DEBUG] 开始初始化LLM客户端")
+        # print("[DEBUG] 开始初始化LLM客户端")
         try:
             llm_client = LLMClient()
-            print("[DEBUG] LLM客户端初始化成功")
+            # print("[DEBUG] LLM客户端初始化成功")
         except Exception as e:
-            print(f"[DEBUG] LLM客户端初始化失败: {e}")
+            # print(f"[DEBUG] LLM客户端初始化失败: {e}")
             import traceback
             print(traceback.format_exc())
             for chunk in stream_message(msg_templates['error_llm_init'](e)):
                 yield chunk
             return
         
-        print("[DEBUG] 开始初始化Embedding客户端")
+        # print("[DEBUG] 开始初始化Embedding客户端")
         try:
             embedding_client = EmbeddingClient()
-            print("[DEBUG] Embedding客户端初始化成功")
+            # print("[DEBUG] Embedding客户端初始化成功")
         except Exception as e:
-            print(f"[DEBUG] Embedding客户端初始化失败: {e}")
+            # print(f"[DEBUG] Embedding客户端初始化失败: {e}")
             import traceback
             print(traceback.format_exc())
             for chunk in stream_message(msg_templates['error_embedding_init'](e)):
                 yield chunk
             return
         
-        print("[DEBUG] 开始初始化论文检索器")
+        # print("[DEBUG] 开始初始化论文检索器")
         try:
             retriever = PaperRetriever()
-            print("[DEBUG] 论文检索器初始化成功")
+            # print("[DEBUG] 论文检索器初始化成功")
         except Exception as e:
-            print(f"[DEBUG] 论文检索器初始化失败: {e}")
+            # print(f"[DEBUG] 论文检索器初始化失败: {e}")
             import traceback
             print(traceback.format_exc())
             for chunk in stream_message(msg_templates['error_retriever_init'](e)):
@@ -287,24 +287,24 @@ async def _generate_review_internal(query: str, pdf_content: str) -> AsyncGenera
             return
         
         # 创建解析器、分析器和评阅器
-        print("[DEBUG] 创建解析器、分析器和评阅器")
+        # print("[DEBUG] 创建解析器、分析器和评阅器")
         pdf_parser = PDFParser(llm_client)
         paper_analyzer = PaperAnalyzer(llm_client, embedding_client, retriever)
         reviewer = Reviewer(llm_client)
         
         # 阶段1: PDF解析（简化输出）
-        print("[DEBUG] 开始阶段1: PDF解析")
+        # print("[DEBUG] 开始阶段1: PDF解析")
         try:
             # 增加超时时间，因为使用了reasoner模型需要更长时间
             parse_timeout = Config.PDF_PARSE_TIMEOUT * 2  # 将超时时间翻倍
-            print(f"[DEBUG] 开始解析PDF，超时时间: {parse_timeout + 10}秒")
+            # print(f"[DEBUG] 开始解析PDF，超时时间: {parse_timeout + 10}秒")
             structured_info = await asyncio.wait_for(
                 asyncio.to_thread(pdf_parser.parse, pdf_content, parse_timeout, language),
                 timeout=parse_timeout + 10
             )
-            print("[DEBUG] PDF解析完成")
+            # print("[DEBUG] PDF解析完成")
         except asyncio.TimeoutError:
-            print("[DEBUG] PDF解析超时，尝试使用备用方法提取基本信息")
+            # print("[DEBUG] PDF解析超时，尝试使用备用方法提取基本信息")
             for chunk in stream_message(msg_templates['pdf_timeout']):
                 yield chunk
             # 超时时，尝试提取基本信息
@@ -332,16 +332,16 @@ async def _generate_review_internal(query: str, pdf_content: str) -> AsyncGenera
                 if not structured_info["Title"]:
                     structured_info["Title"] = pdf_text[:100].strip().replace('\n', ' ')
                 
-                print("[DEBUG] 备用方法提取基本信息完成")
+                # print("[DEBUG] 备用方法提取基本信息完成")
                 for chunk in stream_message(msg_templates['pdf_fallback']):
                     yield chunk
             except Exception as e:
-                print(f"[DEBUG] 备用方法也失败: {e}")
+                # print(f"[DEBUG] 备用方法也失败: {e}")
                 for chunk in stream_message(msg_templates['error_pdf_parse'](e)):
                     yield chunk
                 return
         except Exception as e:
-            print(f"[DEBUG] PDF解析失败: {e}")
+            # print(f"[DEBUG] PDF解析失败: {e}")
             import traceback
             print(traceback.format_exc())
             # 尝试使用备用方法
@@ -354,26 +354,26 @@ async def _generate_review_internal(query: str, pdf_content: str) -> AsyncGenera
                     "Abstract": pdf_text[:500] if len(pdf_text) > 0 else "",
                     "error": f"PDF解析失败: {str(e)}"
                 }
-                print("[DEBUG] 使用备用方法提取基本信息")
+                # print("[DEBUG] 使用备用方法提取基本信息")
                 for chunk in stream_message(msg_templates['pdf_timeout']):
                     yield chunk
                 for chunk in stream_message(msg_templates['pdf_fallback']):
                     yield chunk
             except Exception as e2:
-                print(f"[DEBUG] 备用方法也失败: {e2}")
+                # print(f"[DEBUG] 备用方法也失败: {e2}")
                 for chunk in stream_message(msg_templates['error_pdf_parse'](e2)):
                     yield chunk
                 return
         
         # 检查是否有错误
-        print("[DEBUG] 检查PDF解析结果")
+        # print("[DEBUG] 检查PDF解析结果")
         if "error" in structured_info:
-            print(f"[DEBUG] PDF解析有警告: {structured_info.get('error')}")
+            # print(f"[DEBUG] PDF解析有警告: {structured_info.get('error')}")
             for chunk in stream_message(msg_templates['pdf_warning'](structured_info.get('error'))):
                 yield chunk
             # 如果只有错误信息，无法继续
             if not structured_info.get("raw_text"):
-                print("[DEBUG] PDF解析失败，无法继续")
+                # print("[DEBUG] PDF解析失败，无法继续")
                 if language == 'zh':
                     error_msg = "## ❌ 错误\n\nPDF解析失败，无法继续\n\n"
                 else:
@@ -387,28 +387,28 @@ async def _generate_review_internal(query: str, pdf_content: str) -> AsyncGenera
             yield chunk
         
         # 阶段2: 关键信息提取与查询构建（简化输出）
-        print("[DEBUG] 开始阶段2: 关键信息提取")
+        # print("[DEBUG] 开始阶段2: 关键信息提取")
         try:
             # 只提取关键词，不进行完整分析（节省时间）
             # 增加超时时间，因为使用了reasoner模型需要更长时间
             extraction_timeout = Config.KEY_EXTRACTION_TIMEOUT * 2  # 将超时时间翻倍
-            print(f"[DEBUG] 开始提取关键词，超时时间: {extraction_timeout + 10}秒")
+            # print(f"[DEBUG] 开始提取关键词，超时时间: {extraction_timeout + 10}秒")
             keywords = await asyncio.wait_for(
                 asyncio.to_thread(paper_analyzer.extract_keywords, structured_info, extraction_timeout, language),
                 timeout=extraction_timeout + 10
             )
             query = await asyncio.to_thread(paper_analyzer.build_query, keywords, structured_info)
-            print(f"[DEBUG] 关键词提取完成: {keywords}")
+            # print(f"[DEBUG] 关键词提取完成: {keywords}")
         except asyncio.TimeoutError:
-            print("[DEBUG] 关键信息提取超时，使用备用方法")
+            # print("[DEBUG] 关键信息提取超时，使用备用方法")
             for chunk in stream_message(msg_templates['key_extraction_timeout']):
                 yield chunk
             # 使用备用方法提取关键词
             keywords = await asyncio.to_thread(paper_analyzer._extract_fallback_keywords, structured_info)
             query = await asyncio.to_thread(paper_analyzer.build_query, keywords, structured_info)
-            print(f"[DEBUG] 备用方法提取关键词完成: {keywords}")
+            # print(f"[DEBUG] 备用方法提取关键词完成: {keywords}")
         except Exception as e:
-            print(f"[DEBUG] 关键信息提取失败: {e}")
+            # print(f"[DEBUG] 关键信息提取失败: {e}")
             for chunk in stream_message(msg_templates['error_key_extraction']):
                 yield chunk
             return
@@ -418,18 +418,18 @@ async def _generate_review_internal(query: str, pdf_content: str) -> AsyncGenera
             yield chunk
         
         # 阶段3: 相关论文检索（简化输出）
-        print("[DEBUG] 开始阶段3: 相关论文检索")
+        # print("[DEBUG] 开始阶段3: 相关论文检索")
         related_papers = []
         if query:
             try:
-                print(f"[DEBUG] 开始检索论文，查询: {query[:100]}...")
+                # print(f"[DEBUG] 开始检索论文，查询: {query[:100]}...")
                 related_papers = await asyncio.wait_for(
                     asyncio.to_thread(paper_analyzer.retrieve_related_papers, query, keywords, Config.RETRIEVAL_TIMEOUT),
                     timeout=Config.RETRIEVAL_TIMEOUT + 10
                 )
-                print(f"[DEBUG] 论文检索完成，检索到 {len(related_papers)} 篇论文")
+                # print(f"[DEBUG] 论文检索完成，检索到 {len(related_papers)} 篇论文")
             except Exception as e:
-                print(f"[DEBUG] 论文检索失败: {e}")
+                # print(f"[DEBUG] 论文检索失败: {e}")
                 import traceback
                 print(traceback.format_exc())
                 related_papers = []
@@ -439,7 +439,7 @@ async def _generate_review_internal(query: str, pdf_content: str) -> AsyncGenera
             yield chunk
         
         # 阶段4: 语义相似度分析与创新点识别（简化输出）
-        print("[DEBUG] 开始阶段4: 语义分析与创新点识别")
+        # print("[DEBUG] 开始阶段4: 语义分析与创新点识别")
         innovation_analysis = ""
         
         # 格式化结构化信息为文本
@@ -452,7 +452,7 @@ async def _generate_review_internal(query: str, pdf_content: str) -> AsyncGenera
         if related_papers:
             # 有相关论文时，并行计算语义相似度和创新点分析
             try:
-                print("[DEBUG] 开始并行计算语义相似度和创新点分析")
+                # print("[DEBUG] 开始并行计算语义相似度和创新点分析")
                 semantic_task = asyncio.create_task(
                     asyncio.to_thread(paper_analyzer.calculate_semantic_similarity, paper_text, related_papers)
                 )
@@ -473,28 +473,30 @@ async def _generate_review_internal(query: str, pdf_content: str) -> AsyncGenera
                 )
                 
                 if isinstance(innovation_analysis, Exception):
-                    print(f"[DEBUG] 创新点分析失败: {innovation_analysis}")
+                    # print(f"[DEBUG] 创新点分析失败: {innovation_analysis}")
                     innovation_analysis = ""
                 elif isinstance(semantic_similarities, Exception):
-                    print(f"[DEBUG] 语义相似度计算失败: {semantic_similarities}")
+                    # print(f"[DEBUG] 语义相似度计算失败: {semantic_similarities}")
+                    pass
                 else:
-                    print("[DEBUG] 语义分析和创新点分析完成")
+                    # print("[DEBUG] 语义分析和创新点分析完成")
+                    pass
             except Exception as e:
-                print(f"[DEBUG] 分析失败: {e}")
+                # print(f"[DEBUG] 分析失败: {e}")
                 import traceback
                 print(traceback.format_exc())
                 innovation_analysis = ""
         else:
             # 没有相关论文时，仍然尝试基于论文本身进行创新点分析
-            print("[DEBUG] 没有相关论文，基于论文本身进行创新点分析")
+            # print("[DEBUG] 没有相关论文，基于论文本身进行创新点分析")
             try:
                 innovation_analysis = await asyncio.wait_for(
                     asyncio.to_thread(paper_analyzer.analyze_innovation, structured_info, [], Config.SEMANTIC_ANALYSIS_TIMEOUT, language),
                     timeout=Config.SEMANTIC_ANALYSIS_TIMEOUT + 10
                 )
-                print("[DEBUG] 创新点分析完成（无相关论文）")
+                # print("[DEBUG] 创新点分析完成（无相关论文）")
             except Exception as e:
-                print(f"[DEBUG] 创新点分析失败: {e}")
+                # print(f"[DEBUG] 创新点分析失败: {e}")
                 import traceback
                 print(traceback.format_exc())
                 # 如果创新点分析失败，设置一个默认值
@@ -508,13 +510,13 @@ async def _generate_review_internal(query: str, pdf_content: str) -> AsyncGenera
             yield chunk
         
         # 阶段5: 多维度深度评估（简化输出，在reviewer.review中完成）
-        print("[DEBUG] 开始阶段5: 多维度深度评估")
+        # print("[DEBUG] 开始阶段5: 多维度深度评估")
         # 输出步骤5完成（评估在reviewer.review中完成）
         for chunk in stream_message(msg_templates['step5']):
             yield chunk
         
         # 阶段6: 生成评阅报告（完整输出）
-        print("[DEBUG] 开始阶段6: 生成评阅报告")
+        # print("[DEBUG] 开始阶段6: 生成评阅报告")
         for chunk in stream_message(msg_templates['step6']):
             yield chunk
         
@@ -527,7 +529,7 @@ async def _generate_review_internal(query: str, pdf_content: str) -> AsyncGenera
             yield chunk
         
         try:
-            print(f"[DEBUG] 开始生成评阅报告，超时时间: {Config.EVALUATION_TIMEOUT + Config.REPORT_GENERATION_TIMEOUT + 20}秒")
+            # print(f"[DEBUG] 开始生成评阅报告，超时时间: {Config.EVALUATION_TIMEOUT + Config.REPORT_GENERATION_TIMEOUT + 20}秒")
             review = None
             async for item in run_with_heartbeat(
                 reviewer.review,
@@ -537,13 +539,13 @@ async def _generate_review_internal(query: str, pdf_content: str) -> AsyncGenera
             ):
                 if isinstance(item, tuple) and len(item) == 2 and item[0] == "RESULT":
                     review = item[1]
-                    print(f"[DEBUG] 评阅报告生成完成，长度: {len(review) if review else 0} 字符")
+                    # print(f"[DEBUG] 评阅报告生成完成，长度: {len(review) if review else 0} 字符")
                     break
                 else:
                     yield item
             
             if not review or review.strip() == "":
-                print(f"[DEBUG] 评阅报告为空: review={review}")
+                # print(f"[DEBUG] 评阅报告为空: review={review}")
                 if language == 'zh':
                     error_msg = "⚠️ 评阅报告生成失败，返回空内容\n\n"
                 else:
@@ -555,7 +557,7 @@ async def _generate_review_internal(query: str, pdf_content: str) -> AsyncGenera
                 for chunk in stream_message(f"{review}\n\n"):
                     yield chunk
         except asyncio.TimeoutError:
-            print("[DEBUG] 评阅报告生成超时")
+            # print("[DEBUG] 评阅报告生成超时")
             if language == 'zh':
                 error_msg = "## ❌ 错误\n\n评阅报告生成超时\n\n"
             else:
@@ -564,7 +566,7 @@ async def _generate_review_internal(query: str, pdf_content: str) -> AsyncGenera
                 yield chunk
             return
         except Exception as e:
-            print(f"[DEBUG] 评阅报告生成失败: {e}")
+            # print(f"[DEBUG] 评阅报告生成失败: {e}")
             import traceback
             print(traceback.format_exc())
             for chunk in stream_message(msg_templates['error_review'](e)):
@@ -572,7 +574,7 @@ async def _generate_review_internal(query: str, pdf_content: str) -> AsyncGenera
             return
     
         elapsed = time.time() - start_time
-        print(f"[DEBUG] 论文评阅完成，总耗时: {elapsed:.2f}秒")
+        # print(f"[DEBUG] 论文评阅完成，总耗时: {elapsed:.2f}秒")
         # 不输出总耗时到流式响应，保持输出简洁
     
     except Exception as e:
@@ -605,19 +607,19 @@ async def _generate_review_internal(query: str, pdf_content: str) -> AsyncGenera
 async def generate_review_stream(query: str, pdf_content: str) -> AsyncGenerator[str, None]:
     """生成评阅的流式输出生成器（带超时控制）"""
     start_time = time.time()
-    print(f"[DEBUG] [generate_review_stream] 生成器启动，query长度: {len(query)}, pdf_content长度: {len(pdf_content)}")
+    # print(f"[DEBUG] [generate_review_stream] 生成器启动，query长度: {len(query)}, pdf_content长度: {len(pdf_content)}")
     
     try:
         item_count = 0
         async for item in _generate_review_internal(query, pdf_content):
             item_count += 1
-            if item_count % 100 == 0:
-                print(f"[DEBUG] [generate_review_stream] 已yield {item_count} 个chunk")
+            # if item_count % 100 == 0:
+            #     print(f"[DEBUG] [generate_review_stream] 已yield {item_count} 个chunk")
             
             # 检查是否超时
             elapsed = time.time() - start_time
             if elapsed > REQUEST_TIMEOUT:
-                print(f"[DEBUG] [generate_review_stream] 请求超时，已处理 {item_count} 个chunk")
+                # print(f"[DEBUG] [generate_review_stream] 请求超时，已处理 {item_count} 个chunk")
                 # 检测语言以使用正确的错误消息
                 try:
                     language = await asyncio.to_thread(detect_language, query)
@@ -633,7 +635,7 @@ async def generate_review_stream(query: str, pdf_content: str) -> AsyncGenerator
                 return
             yield item
         
-        print(f"[DEBUG] [generate_review_stream] 生成器正常完成，共yield {item_count} 个chunk")
+        # print(f"[DEBUG] [generate_review_stream] 生成器正常完成，共yield {item_count} 个chunk")
         # 发送结束标记
         yield format_sse_done()
                 
