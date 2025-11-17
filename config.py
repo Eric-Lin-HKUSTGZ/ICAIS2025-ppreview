@@ -77,13 +77,13 @@ class Config(metaclass=ConfigMeta):
         elif name == "REVIEW_TIMEOUT":
             return int(cls._get_env("REVIEW_TIMEOUT", "1200"))  # 20分钟总超时
         elif name == "PDF_PARSE_TIMEOUT":
-            return int(cls._get_env("PDF_PARSE_TIMEOUT", "180"))  # 3分钟（因为使用reasoner模型需要更长时间）
+            return int(cls._get_env("PDF_PARSE_TIMEOUT", "180"))  # 3分钟
         elif name == "KEY_EXTRACTION_TIMEOUT":
-            return int(cls._get_env("KEY_EXTRACTION_TIMEOUT", "120"))  # 2分钟（因为使用reasoner模型需要更长时间）
+            return int(cls._get_env("KEY_EXTRACTION_TIMEOUT", "120"))  # 2分钟
         elif name == "RETRIEVAL_TIMEOUT":
             return int(cls._get_env("RETRIEVAL_TIMEOUT", "180"))  # 3分钟
         elif name == "SEMANTIC_ANALYSIS_TIMEOUT":
-            return int(cls._get_env("SEMANTIC_ANALYSIS_TIMEOUT", "120"))  # 2分钟
+            return int(cls._get_env("SEMANTIC_ANALYSIS_TIMEOUT", "180"))  # 3分钟
         elif name == "EVALUATION_TIMEOUT":
             return int(cls._get_env("EVALUATION_TIMEOUT", "480"))  # 8分钟
         elif name == "REPORT_GENERATION_TIMEOUT":

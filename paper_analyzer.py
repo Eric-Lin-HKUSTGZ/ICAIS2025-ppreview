@@ -12,6 +12,18 @@ from config import Config
 
 class PaperAnalyzer:
     """论文分析器"""
+    
+    CORE_SECTION_KEYS = [
+        "Abstract",
+        "Introduction",
+        "Methodology",
+        "Experiments",
+        "Results",
+        "Conclusion",
+        "Core Contributions",
+        "Technical Approach"
+    ]
+    FALLBACK_SNIPPET_LENGTH = 1800
 
     def __init__(self, llm_client: LLMClient, embedding_client: EmbeddingClient, retriever: PaperRetriever):
         """
@@ -294,12 +306,28 @@ class PaperAnalyzer:
                 return f"Innovation analysis failed: {str(e)}"
 
     def _format_structured_info(self, structured_info: Dict[str, str]) -> str:
-        """格式化结构化信息为文本"""
+        """格式化结构化信息为文本，必要时回退到原始文本片段"""
         parts = []
         for key, value in structured_info.items():
             if key not in ["raw_text", "raw_response", "error"] and value:
                 parts.append(f"{key}:\n{value}\n")
+        
+        raw_text = structured_info.get("raw_text", "")
+        if raw_text:
+            snippet = raw_text[:self.FALLBACK_SNIPPET_LENGTH].strip()
+            if snippet:
+                parts.append("Raw PDF Excerpt:\n" + snippet + ("\n...\n" if len(raw_text) > len(snippet) else "\n"))
+        
+        if not parts:
+            error_msg = structured_info.get("error") or "No structured sections could be extracted."
+            minimal = raw_text[:400].strip() if raw_text else "Raw PDF text unavailable."
+            parts.append(f"[Parser Warning] {error_msg}\n\n{minimal}")
+        
         return "\n".join(parts)
+    
+    def has_core_content(self, structured_info: Dict[str, str]) -> bool:
+        """判断结构化信息是否包含核心章节"""
+        return any(structured_info.get(key) for key in self.CORE_SECTION_KEYS)
 
     def _format_related_papers(self, related_papers: List[Dict]) -> str:
         """格式化相关论文为文本"""

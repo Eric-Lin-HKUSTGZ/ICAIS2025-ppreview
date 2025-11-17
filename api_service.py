@@ -192,6 +192,8 @@ async def _generate_review_internal(query: str, pdf_content: str) -> AsyncGenera
                     f"✅ 已检索到 {n} 篇相关论文\n\n" if n is not None else
                     "### 📚 步骤 3/6: 相关论文检索\n\n✅ 已完成\n\n"
                 ),
+                'step3_skip_degraded': "### 📚 步骤 3/6: 相关论文检索\n\n⚠️ 由于PDF解析信息不足，跳过外部论文检索，后续分析仅基于上传论文内容。\n\n",
+                'step3_skip_no_query': "### 📚 步骤 3/6: 相关论文检索\n\n⚠️ 无法生成有效查询，跳过外部论文检索。\n\n",
                 'step4': "### 💡 步骤 4/6: 语义分析与创新点识别\n\n✅ 已完成\n\n",
                 'step5': "### ⭐ 步骤 5/6: 多维度深度评估\n\n✅ 已完成\n\n",
                 'step6': "### 📋 步骤 6/6: 生成评阅报告\n\n",
@@ -221,6 +223,8 @@ async def _generate_review_internal(query: str, pdf_content: str) -> AsyncGenera
                     f"✅ Retrieved {n} related papers\n\n" if n is not None else
                     "### 📚 Step 3/6: Related Paper Retrieval\n\n✅ Completed\n\n"
                 ),
+                'step3_skip_degraded': "### 📚 Step 3/6: Related Paper Retrieval\n\n⚠️ Skipped because the parsed PDF lacks reliable structure; subsequent analysis relies solely on the uploaded manuscript.\n\n",
+                'step3_skip_no_query': "### 📚 Step 3/6: Related Paper Retrieval\n\n⚠️ Skipped because no valid query could be generated from the PDF content.\n\n",
                 'step4': "### 💡 Step 4/6: Semantic Analysis and Innovation Identification\n\n✅ Completed\n\n",
                 'step5': "### ⭐ Step 5/6: Multi-dimensional Deep Evaluation\n\n✅ Completed\n\n",
                 'step6': "### 📋 Step 6/6: Review Report Generation\n\n",
@@ -409,6 +413,9 @@ async def _generate_review_internal(query: str, pdf_content: str) -> AsyncGenera
         for chunk in stream_message(msg_templates['step1']):
             yield chunk
         
+        has_core_sections = paper_analyzer.has_core_content(structured_info)
+        degraded_parse = (not has_core_sections) or bool(structured_info.get("error"))
+        
         # 阶段2: 关键信息提取与查询构建（简化输出，增加心跳）
         # print("[DEBUG] 开始阶段2: 关键信息提取")
         try:
@@ -453,44 +460,45 @@ async def _generate_review_internal(query: str, pdf_content: str) -> AsyncGenera
         # 阶段3: 相关论文检索（简化输出）
         # print("[DEBUG] 开始阶段3: 相关论文检索")
         related_papers = []
-        if query:
-            try:
-                # print(f"[DEBUG] 开始检索论文，查询: {query[:100]}...")
-                heartbeat_interval = 15
-                async for item in run_with_heartbeat(
-                    paper_analyzer.retrieve_related_papers,
-                    query,
-                    keywords,
-                    Config.RETRIEVAL_TIMEOUT,
-                    heartbeat_interval=heartbeat_interval,
-                    timeout=Config.RETRIEVAL_TIMEOUT + 10
-                ):
-                    if isinstance(item, tuple) and len(item) == 2 and item[0] == "RESULT":
-                        related_papers = item[1] or []
-                        break
-                    else:
-                        yield item
-                # print(f"[DEBUG] 论文检索完成，检索到 {len(related_papers)} 篇论文")
-            except Exception as e:
-                # print(f"[DEBUG] 论文检索失败: {e}")
-                import traceback
-                print(traceback.format_exc())
-                related_papers = []
+        skip_reason_key = None
+        if not query:
+            skip_reason_key = 'step3_skip_no_query'
+        elif degraded_parse:
+            skip_reason_key = 'step3_skip_degraded'
         
-        # 输出步骤3完成
-        for chunk in stream_message(msg_templates['step3'](len(related_papers))):
-            yield chunk
+        if skip_reason_key:
+            for chunk in stream_message(msg_templates[skip_reason_key]):
+                yield chunk
+        else:
+            if query:
+                try:
+                    heartbeat_interval = 15
+                    async for item in run_with_heartbeat(
+                        paper_analyzer.retrieve_related_papers,
+                        query,
+                        keywords,
+                        Config.RETRIEVAL_TIMEOUT,
+                        heartbeat_interval=heartbeat_interval,
+                        timeout=Config.RETRIEVAL_TIMEOUT + 10
+                    ):
+                        if isinstance(item, tuple) and len(item) == 2 and item[0] == "RESULT":
+                            related_papers = item[1] or []
+                            break
+                        else:
+                            yield item
+                except Exception as e:
+                    import traceback
+                    print(traceback.format_exc())
+                    related_papers = []
+            for chunk in stream_message(msg_templates['step3'](len(related_papers))):
+                yield chunk
         
         # 阶段4: 语义相似度分析与创新点识别（简化输出，增加心跳防止超时）
         # print("[DEBUG] 开始阶段4: 语义分析与创新点识别")
         innovation_analysis = ""
         
         # 格式化结构化信息为文本
-        info_parts = []
-        for key, value in structured_info.items():
-            if key not in ["raw_text", "raw_response", "error"] and value:
-                info_parts.append(f"{key}:\n{value}\n")
-        paper_text = "\n".join(info_parts)
+        paper_text = paper_analyzer._format_structured_info(structured_info)
         semantic_similarities = []
         heartbeat_interval = 15
         

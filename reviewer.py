@@ -161,6 +161,15 @@ This paper presents research on {title}. {abstract[:200]}...
         for key, value in structured_info.items():
             if key not in ["raw_text", "raw_response", "error"] and value:
                 parts.append(f"{key}:\n{value}\n")
+        raw_text = structured_info.get("raw_text", "")
+        if raw_text:
+            snippet = raw_text[:1800].strip()
+            if snippet:
+                parts.append("Raw PDF Excerpt:\n" + snippet + ("\n...\n" if len(raw_text) > len(snippet) else "\n"))
+        if not parts:
+            error_msg = structured_info.get("error") or "Structured sections unavailable."
+            minimal = raw_text[:400].strip() if raw_text else "Raw PDF text unavailable."
+            parts.append(f"[Parser Warning] {error_msg}\n\n{minimal}")
         return "\n".join(parts)
 
     def _format_related_papers(self, related_papers: list) -> str:
