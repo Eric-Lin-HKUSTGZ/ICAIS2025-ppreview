@@ -121,7 +121,7 @@ def stream_message(message: str, chunk_size: int = 1):
         yield format_sse_data(chunk)
 
 
-async def run_with_heartbeat(task_func, *args, heartbeat_interval=25, **kwargs):
+async def run_with_heartbeat(task_func, *args, heartbeat_interval=25, timeout=None, **kwargs):
     """
     执行长时间任务，期间定期发送心跳数据
     
@@ -145,16 +145,17 @@ async def run_with_heartbeat(task_func, *args, heartbeat_interval=25, **kwargs):
     # 在任务执行期间定期发送心跳
     while not task.done():
         await asyncio.sleep(1)  # 每秒检查一次
-        elapsed = time.time() - last_heartbeat
+        now = time.time()
         
         # 如果超过心跳间隔，发送心跳数据
-        if elapsed >= heartbeat_interval:
+        if now - last_heartbeat >= heartbeat_interval:
             yield format_sse_data(" ")  # 发送一个空格作为心跳
-            last_heartbeat = time.time()
+            last_heartbeat = now
         
-        # 检查任务是否完成（在发送心跳后检查，避免在心跳检查之间完成时遗漏）
-        if task.done():
-            break
+        # 如果设置了超时并且超过总时长，取消任务
+        if timeout is not None and (now - start_time) > timeout:
+            task.cancel()
+            raise asyncio.TimeoutError(f"任务执行超过 {timeout} 秒，已取消")
     
     # 等待任务完成并返回结果
     try:
@@ -292,17 +293,26 @@ async def _generate_review_internal(query: str, pdf_content: str) -> AsyncGenera
         paper_analyzer = PaperAnalyzer(llm_client, embedding_client, retriever)
         reviewer = Reviewer(llm_client)
         
-        # 阶段1: PDF解析（简化输出）
+        # 阶段1: PDF解析（简化输出，增加心跳）
         # print("[DEBUG] 开始阶段1: PDF解析")
+        structured_info = None
         try:
             # 增加超时时间，因为使用了reasoner模型需要更长时间
             parse_timeout = Config.PDF_PARSE_TIMEOUT * 2  # 将超时时间翻倍
-            # print(f"[DEBUG] 开始解析PDF，超时时间: {parse_timeout + 10}秒")
-            structured_info = await asyncio.wait_for(
-                asyncio.to_thread(pdf_parser.parse, pdf_content, parse_timeout, language),
+            heartbeat_interval = 15
+            async for item in run_with_heartbeat(
+                pdf_parser.parse,
+                pdf_content,
+                parse_timeout,
+                language,
+                heartbeat_interval=heartbeat_interval,
                 timeout=parse_timeout + 10
-            )
-            # print("[DEBUG] PDF解析完成")
+            ):
+                if isinstance(item, tuple) and len(item) == 2 and item[0] == "RESULT":
+                    structured_info = item[1]
+                    break
+                else:
+                    yield item
         except asyncio.TimeoutError:
             # print("[DEBUG] PDF解析超时，尝试使用备用方法提取基本信息")
             for chunk in stream_message(msg_templates['pdf_timeout']):
@@ -365,6 +375,11 @@ async def _generate_review_internal(query: str, pdf_content: str) -> AsyncGenera
                     yield chunk
                 return
         
+        if structured_info is None:
+            for chunk in stream_message(msg_templates['error_pdf_parse']("PDF parsing returned empty result")):
+                yield chunk
+            return
+        
         # 检查是否有错误
         # print("[DEBUG] 检查PDF解析结果")
         if "error" in structured_info:
@@ -386,17 +401,27 @@ async def _generate_review_internal(query: str, pdf_content: str) -> AsyncGenera
         for chunk in stream_message(msg_templates['step1']):
             yield chunk
         
-        # 阶段2: 关键信息提取与查询构建（简化输出）
+        # 阶段2: 关键信息提取与查询构建（简化输出，增加心跳）
         # print("[DEBUG] 开始阶段2: 关键信息提取")
         try:
             # 只提取关键词，不进行完整分析（节省时间）
             # 增加超时时间，因为使用了reasoner模型需要更长时间
             extraction_timeout = Config.KEY_EXTRACTION_TIMEOUT * 2  # 将超时时间翻倍
-            # print(f"[DEBUG] 开始提取关键词，超时时间: {extraction_timeout + 10}秒")
-            keywords = await asyncio.wait_for(
-                asyncio.to_thread(paper_analyzer.extract_keywords, structured_info, extraction_timeout, language),
+            heartbeat_interval = 15
+            keywords = []
+            async for item in run_with_heartbeat(
+                paper_analyzer.extract_keywords,
+                structured_info,
+                extraction_timeout,
+                language,
+                heartbeat_interval=heartbeat_interval,
                 timeout=extraction_timeout + 10
-            )
+            ):
+                if isinstance(item, tuple) and len(item) == 2 and item[0] == "RESULT":
+                    keywords = item[1] or []
+                    break
+                else:
+                    yield item
             query = await asyncio.to_thread(paper_analyzer.build_query, keywords, structured_info)
             # print(f"[DEBUG] 关键词提取完成: {keywords}")
         except asyncio.TimeoutError:
@@ -423,10 +448,20 @@ async def _generate_review_internal(query: str, pdf_content: str) -> AsyncGenera
         if query:
             try:
                 # print(f"[DEBUG] 开始检索论文，查询: {query[:100]}...")
-                related_papers = await asyncio.wait_for(
-                    asyncio.to_thread(paper_analyzer.retrieve_related_papers, query, keywords, Config.RETRIEVAL_TIMEOUT),
+                heartbeat_interval = 15
+                async for item in run_with_heartbeat(
+                    paper_analyzer.retrieve_related_papers,
+                    query,
+                    keywords,
+                    Config.RETRIEVAL_TIMEOUT,
+                    heartbeat_interval=heartbeat_interval,
                     timeout=Config.RETRIEVAL_TIMEOUT + 10
-                )
+                ):
+                    if isinstance(item, tuple) and len(item) == 2 and item[0] == "RESULT":
+                        related_papers = item[1] or []
+                        break
+                    else:
+                        yield item
                 # print(f"[DEBUG] 论文检索完成，检索到 {len(related_papers)} 篇论文")
             except Exception as e:
                 # print(f"[DEBUG] 论文检索失败: {e}")
@@ -438,7 +473,7 @@ async def _generate_review_internal(query: str, pdf_content: str) -> AsyncGenera
         for chunk in stream_message(msg_templates['step3'](len(related_papers))):
             yield chunk
         
-        # 阶段4: 语义相似度分析与创新点识别（简化输出）
+        # 阶段4: 语义相似度分析与创新点识别（简化输出，增加心跳防止超时）
         # print("[DEBUG] 开始阶段4: 语义分析与创新点识别")
         innovation_analysis = ""
         
@@ -448,62 +483,79 @@ async def _generate_review_internal(query: str, pdf_content: str) -> AsyncGenera
             if key not in ["raw_text", "raw_response", "error"] and value:
                 info_parts.append(f"{key}:\n{value}\n")
         paper_text = "\n".join(info_parts)
+        semantic_similarities = []
+        heartbeat_interval = 15
         
         if related_papers:
-            # 有相关论文时，并行计算语义相似度和创新点分析
+            # 有相关论文时，先计算语义相似度，再进行创新点分析
             try:
-                # print("[DEBUG] 开始并行计算语义相似度和创新点分析")
-                semantic_task = asyncio.create_task(
-                    asyncio.to_thread(paper_analyzer.calculate_semantic_similarity, paper_text, related_papers)
-                )
+                async for item in run_with_heartbeat(
+                    paper_analyzer.calculate_semantic_similarity,
+                    paper_text,
+                    related_papers,
+                    heartbeat_interval=heartbeat_interval,
+                    timeout=Config.SEMANTIC_ANALYSIS_TIMEOUT
+                ):
+                    if isinstance(item, tuple) and len(item) == 2 and item[0] == "RESULT":
+                        semantic_similarities = item[1] or []
+                    else:
+                        yield item
                 
-                # 分析创新点
-                innovation_task = asyncio.create_task(
-                    asyncio.wait_for(
-                        asyncio.to_thread(paper_analyzer.analyze_innovation, structured_info, related_papers, Config.SEMANTIC_ANALYSIS_TIMEOUT, language),
-                        timeout=Config.SEMANTIC_ANALYSIS_TIMEOUT + 10
-                    )
-                )
-                
-                # 等待两个任务完成
-                semantic_similarities, innovation_analysis = await asyncio.gather(
-                    semantic_task,
-                    innovation_task,
-                    return_exceptions=True
-                )
-                
-                if isinstance(innovation_analysis, Exception):
-                    # print(f"[DEBUG] 创新点分析失败: {innovation_analysis}")
-                    innovation_analysis = ""
-                elif isinstance(semantic_similarities, Exception):
-                    # print(f"[DEBUG] 语义相似度计算失败: {semantic_similarities}")
-                    pass
+                async for item in run_with_heartbeat(
+                    paper_analyzer.analyze_innovation,
+                    structured_info,
+                    related_papers,
+                    Config.SEMANTIC_ANALYSIS_TIMEOUT,
+                    language,
+                    heartbeat_interval=heartbeat_interval,
+                    timeout=Config.SEMANTIC_ANALYSIS_TIMEOUT + 10
+                ):
+                    if isinstance(item, tuple) and len(item) == 2 and item[0] == "RESULT":
+                        innovation_analysis = item[1] or ""
+                    else:
+                        yield item
+            except asyncio.TimeoutError:
+                # print("[DEBUG] 语义分析阶段超时")
+                for chunk in stream_message(msg_templates['error_analysis']("语义分析阶段超时")):
+                    yield chunk
+                if language == 'zh':
+                    innovation_analysis = "语义分析阶段超时，使用论文自身信息进行基本创新点总结。"
                 else:
-                    # print("[DEBUG] 语义分析和创新点分析完成")
-                    pass
+                    innovation_analysis = "Semantic analysis timed out. Falling back to a basic innovation summary based on the paper content only."
             except Exception as e:
-                # print(f"[DEBUG] 分析失败: {e}")
                 import traceback
                 print(traceback.format_exc())
+                for chunk in stream_message(msg_templates['error_analysis'](e)):
+                    yield chunk
                 innovation_analysis = ""
         else:
-            # 没有相关论文时，仍然尝试基于论文本身进行创新点分析
-            # print("[DEBUG] 没有相关论文，基于论文本身进行创新点分析")
+            # 没有相关论文时，基于论文本身进行创新点分析，同时发送心跳
             try:
-                innovation_analysis = await asyncio.wait_for(
-                    asyncio.to_thread(paper_analyzer.analyze_innovation, structured_info, [], Config.SEMANTIC_ANALYSIS_TIMEOUT, language),
+                async for item in run_with_heartbeat(
+                    paper_analyzer.analyze_innovation,
+                    structured_info,
+                    [],
+                    Config.SEMANTIC_ANALYSIS_TIMEOUT,
+                    language,
+                    heartbeat_interval=heartbeat_interval,
                     timeout=Config.SEMANTIC_ANALYSIS_TIMEOUT + 10
-                )
-                # print("[DEBUG] 创新点分析完成（无相关论文）")
+                ):
+                    if isinstance(item, tuple) and len(item) == 2 and item[0] == "RESULT":
+                        innovation_analysis = item[1] or ""
+                    else:
+                        yield item
+            except asyncio.TimeoutError:
+                if language == 'zh':
+                    innovation_analysis = "创新点分析超时，使用论文自身信息进行基本总结。"
+                else:
+                    innovation_analysis = "Innovation analysis timed out. Falling back to a basic summary from the paper itself."
             except Exception as e:
-                # print(f"[DEBUG] 创新点分析失败: {e}")
                 import traceback
                 print(traceback.format_exc())
-                # 如果创新点分析失败，设置一个默认值
                 if language == 'zh':
-                    innovation_analysis = "由于未检索到相关论文，无法进行对比分析。创新点分析基于论文本身的内容进行。"
+                    innovation_analysis = f"创新点分析失败: {str(e)}"
                 else:
-                    innovation_analysis = "No related papers found for comparison. Innovation analysis is based on the paper content itself."
+                    innovation_analysis = f"Innovation analysis failed: {str(e)}"
         
         # 输出步骤4完成
         for chunk in stream_message(msg_templates['step4']):
@@ -535,7 +587,8 @@ async def _generate_review_internal(query: str, pdf_content: str) -> AsyncGenera
                 reviewer.review,
                 structured_info, innovation_analysis, related_papers, 
                 Config.EVALUATION_TIMEOUT + Config.REPORT_GENERATION_TIMEOUT, language,
-                heartbeat_interval=25
+                heartbeat_interval=25,
+                timeout=Config.EVALUATION_TIMEOUT + Config.REPORT_GENERATION_TIMEOUT + 20
             ):
                 if isinstance(item, tuple) and len(item) == 2 and item[0] == "RESULT":
                     review = item[1]
