@@ -187,7 +187,11 @@ async def _generate_review_internal(query: str, pdf_content: str) -> AsyncGenera
             msg_templates = {
                 'step1': "### 📄 步骤 1/6: PDF解析与结构化提取\n\n✅ 已完成\n\n",
                 'step2': "### 🔑 步骤 2/6: 关键信息提取\n\n✅ 已完成\n\n",
-                'step3': lambda n: f"### 📚 步骤 3/6: 相关论文检索\n\n✅ 已检索到 {n} 篇相关论文\n\n",
+                'step3': lambda n: (
+                    "### 📚 步骤 3/6: 相关论文检索\n\n"
+                    f"✅ 已检索到 {n} 篇相关论文\n\n" if n is not None else
+                    "### 📚 步骤 3/6: 相关论文检索\n\n✅ 已完成\n\n"
+                ),
                 'step4': "### 💡 步骤 4/6: 语义分析与创新点识别\n\n✅ 已完成\n\n",
                 'step5': "### ⭐ 步骤 5/6: 多维度深度评估\n\n✅ 已完成\n\n",
                 'step6': "### 📋 步骤 6/6: 生成评阅报告\n\n",
@@ -212,7 +216,11 @@ async def _generate_review_internal(query: str, pdf_content: str) -> AsyncGenera
             msg_templates = {
                 'step1': "### 📄 Step 1/6: PDF Parsing and Structure Extraction\n\n✅ Completed\n\n",
                 'step2': "### 🔑 Step 2/6: Key Information Extraction\n\n✅ Completed\n\n",
-                'step3': lambda n: f"### 📚 Step 3/6: Related Paper Retrieval\n\n✅ Retrieved {n} related papers\n\n",
+                'step3': lambda n: (
+                    "### 📚 Step 3/6: Related Paper Retrieval\n\n"
+                    f"✅ Retrieved {n} related papers\n\n" if n is not None else
+                    "### 📚 Step 3/6: Related Paper Retrieval\n\n✅ Completed\n\n"
+                ),
                 'step4': "### 💡 Step 4/6: Semantic Analysis and Innovation Identification\n\n✅ Completed\n\n",
                 'step5': "### ⭐ Step 5/6: Multi-dimensional Deep Evaluation\n\n✅ Completed\n\n",
                 'step6': "### 📋 Step 6/6: Review Report Generation\n\n",
