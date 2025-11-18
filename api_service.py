@@ -392,6 +392,24 @@ async def _generate_review_internal(query: str, pdf_content: str) -> AsyncGenera
                 yield chunk
             return
         
+        # PDF解析完成后的debug信息
+        print("\n" + "="*80)
+        print("[DEBUG] PDF解析完成 - 初步结果")
+        print("="*80)
+        print(f"[DEBUG] structured_info的键: {list(structured_info.keys())}")
+        if "error" in structured_info:
+            print(f"[DEBUG] ⚠️ 检测到error字段: {structured_info.get('error')}")
+        if "raw_text" in structured_info:
+            raw_text_len = len(structured_info.get("raw_text", ""))
+            print(f"[DEBUG] raw_text长度: {raw_text_len} 字符")
+        if "raw_response" in structured_info:
+            raw_response_len = len(structured_info.get("raw_response", ""))
+            print(f"[DEBUG] raw_response长度: {raw_response_len} 字符")
+            # 显示raw_response的前500字符，帮助诊断LLM输出格式
+            raw_response_preview = structured_info.get("raw_response", "")[:500]
+            print(f"[DEBUG] raw_response预览:\n{raw_response_preview}...")
+        print("="*80 + "\n")
+        
         # 检查是否有错误
         # print("[DEBUG] 检查PDF解析结果")
         if "error" in structured_info:
@@ -413,8 +431,38 @@ async def _generate_review_internal(query: str, pdf_content: str) -> AsyncGenera
         for chunk in stream_message(msg_templates['step1']):
             yield chunk
         
-        has_core_sections = paper_analyzer.has_core_content(structured_info)
-        degraded_parse = (not has_core_sections) or bool(structured_info.get("error"))
+        # 详细的debug检查
+        debug_info = paper_analyzer.debug_core_content_check(structured_info)
+        has_core_sections = debug_info["has_core_content"]
+        has_error = debug_info["has_error"]
+        degraded_parse = (not has_core_sections) or has_error
+        
+        # 输出详细的debug信息
+        print("\n" + "="*80)
+        print("[DEBUG] PDF解析结果诊断")
+        print("="*80)
+        print(f"[DEBUG] has_core_content: {has_core_sections}")
+        print(f"[DEBUG] has_error字段: {has_error}")
+        if has_error:
+            print(f"[DEBUG] error消息: {debug_info['error_message']}")
+        print(f"[DEBUG] degraded_parse: {degraded_parse}")
+        print(f"[DEBUG] structured_info中的所有键: {debug_info['all_keys']}")
+        print("\n[DEBUG] 核心章节字段检查结果:")
+        for section, exists in debug_info['core_sections_status'].items():
+            status = "✓ 存在" if exists else "✗ 缺失"
+            value_preview = ""
+            if exists:
+                value = structured_info.get(section, "")
+                value_preview = f" (内容预览: {value[:50]}...)" if len(value) > 50 else f" (内容: {value})"
+            print(f"  {status}: {section}{value_preview}")
+        print(f"\n[DEBUG] 缺失的核心章节字段: {debug_info['missing_core_sections']}")
+        if degraded_parse:
+            print("\n[DEBUG] ⚠️ 触发degraded_parse的原因:")
+            if not has_core_sections:
+                print("  - 原因1: has_core_content() 返回 False (所有核心章节字段都缺失)")
+            if has_error:
+                print(f"  - 原因2: structured_info 中存在 'error' 字段: {debug_info['error_message']}")
+        print("="*80 + "\n")
         
         # 阶段2: 关键信息提取与查询构建（简化输出，增加心跳）
         # print("[DEBUG] 开始阶段2: 关键信息提取")

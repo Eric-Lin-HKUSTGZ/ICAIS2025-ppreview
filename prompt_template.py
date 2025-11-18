@@ -48,6 +48,16 @@ def get_pdf_parse_prompt(pdf_text: str, language: str = 'en') -> str:
 PDF文本：
 {pdf_text[:20000]}
 
+请严格按照以下格式输出，每个字段使用以下格式之一：
+- "Abstract: 内容" 或 "**Abstract**: 内容"
+- "摘要: 内容" 或 "**摘要**: 内容"
+
+重要格式要求：
+1. 每个字段名称后必须紧跟冒号（:或：）
+2. 字段名称可以使用英文（如Abstract）或中文（如摘要）
+3. 可以使用Markdown加粗格式（**字段名**）
+4. 如果使用编号格式（1. 2. 3.），请确保字段名称和冒号在同一行
+
 请以清晰、有组织的形式提供结构化信息。如果任何部分缺失，请注明"未找到"。
 
 请使用中文回答。所有输出内容都必须是中文。"""
@@ -72,6 +82,15 @@ Please extract and organize the following information in a structured format:
 
 PDF Text:
 {pdf_text[:20000]}
+
+Please strictly follow the following format for each field:
+- "Abstract: content" or "**Abstract**: content"
+
+Important format requirements:
+1. Each field name must be followed immediately by a colon (:)
+2. Field names can be in English (e.g., Abstract, Introduction)
+3. Markdown bold format (**Field Name**) is allowed
+4. If using numbered format (1. 2. 3.), ensure the field name and colon are on the same line
 
 Please provide the structured information in a clear, organized format. If any section is missing, indicate "Not found"."""
     

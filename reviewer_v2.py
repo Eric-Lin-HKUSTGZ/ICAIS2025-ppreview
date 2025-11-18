@@ -1,15 +1,20 @@
 """
-评阅生成模块 - 多维度评估、评阅报告生成
+评阅生成模块 V2 - 基于大模型能力的论文评阅系统（不涉及文件检索）
+多维度评估、评阅报告生成
 """
 import time
 from typing import Dict, Optional
 from llm_client import LLMClient
-from prompt_template import get_evaluation_prompt, get_review_generation_prompt
+from prompt_template_v2 import (
+    get_innovation_analysis_prompt_v2,
+    get_evaluation_prompt_v2,
+    get_review_generation_prompt_v2
+)
 from config import Config
 
 
-class Reviewer:
-    """论文评阅器"""
+class ReviewerV2:
+    """论文评阅器 V2 - 基于大模型能力，不涉及文件检索"""
 
     def __init__(self, llm_client: LLMClient):
         """
@@ -21,14 +26,49 @@ class Reviewer:
         self.llm_client = llm_client
         self.config = Config
 
-    def evaluate(self, structured_info: Dict[str, str], innovation_analysis: str, related_papers: list, timeout: Optional[int] = None, language: str = 'en') -> str:
+    def analyze_innovation(self, structured_info: Dict[str, str], timeout: Optional[int] = None, language: str = 'en') -> str:
         """
-        多维度评估论文
+        分析论文的创新点（基于论文内容本身）
+        
+        Args:
+            structured_info: 结构化的论文信息
+            timeout: 超时时间（秒）
+            language: 语言，'zh'表示中文，'en'表示英文
+        
+        Returns:
+            创新点分析结果文本
+        """
+        timeout = timeout or self.config.SEMANTIC_ANALYSIS_TIMEOUT
+        
+        try:
+            # 格式化相关信息
+            info_text = self._format_structured_info(structured_info)
+            
+            prompt = get_innovation_analysis_prompt_v2(info_text, language=language)
+            
+            # 使用推理模型进行深度分析
+            response = self.llm_client.get_response(
+                prompt,
+                use_reasoning_model=True,
+                temperature=0.5,
+                timeout=timeout
+            )
+            
+            return response
+        except Exception as e:
+            print(f"⚠️  创新点分析失败: {e}")
+            if language == 'zh':
+                return f"创新点分析失败: {str(e)}"
+            else:
+                return f"Innovation analysis failed: {str(e)}"
+
+    def evaluate(self, structured_info: Dict[str, str], innovation_analysis: str, timeout: Optional[int] = None, language: str = 'en') -> str:
+        """
+        多维度评估论文（基于论文内容本身，不依赖相关论文）
         
         Args:
             structured_info: 结构化的论文信息
             innovation_analysis: 创新点分析结果
-            related_papers: 相关论文列表
             timeout: 超时时间（秒）
             language: 语言，'zh'表示中文，'en'表示英文
         
@@ -40,9 +80,8 @@ class Reviewer:
         try:
             # 格式化相关信息
             info_text = self._format_structured_info(structured_info)
-            related_text = self._format_related_papers(related_papers)
             
-            prompt = get_evaluation_prompt(info_text, innovation_analysis, related_text, language=language)
+            prompt = get_evaluation_prompt_v2(info_text, innovation_analysis, language=language)
             
             # 使用推理模型进行深度评估
             response = self.llm_client.get_response(
@@ -55,7 +94,10 @@ class Reviewer:
             return response
         except Exception as e:
             print(f"⚠️  评估失败: {e}")
-            return f"评估失败: {str(e)}"
+            if language == 'zh':
+                return f"评估失败: {str(e)}"
+            else:
+                return f"Evaluation failed: {str(e)}"
 
     def generate_review(self, structured_info: Dict[str, str], evaluation: str, innovation_analysis: str, timeout: Optional[int] = None, language: str = 'en') -> str:
         """
@@ -75,7 +117,7 @@ class Reviewer:
         
         # 格式化相关信息
         info_text = self._format_structured_info(structured_info)
-        prompt = get_review_generation_prompt(info_text, evaluation, innovation_analysis, language=language)
+        prompt = get_review_generation_prompt_v2(info_text, evaluation, innovation_analysis, language=language)
         
         # 重试机制：最多重试3次，针对502/503错误
         max_retries = 3
@@ -97,7 +139,10 @@ class Reviewer:
                 else:
                     # 如果返回空内容，也视为失败，继续重试
                     if attempt < max_retries - 1:
-                        print(f"⚠️  评阅报告生成返回空内容，{retry_delays[attempt]}秒后重试... (尝试 {attempt + 1}/{max_retries})")
+                        if language == 'zh':
+                            print(f"⚠️  评阅报告生成返回空内容，{retry_delays[attempt]}秒后重试... (尝试 {attempt + 1}/{max_retries})")
+                        else:
+                            print(f"⚠️  Review generation returned empty content, retrying in {retry_delays[attempt]} seconds... (attempt {attempt + 1}/{max_retries})")
                         time.sleep(retry_delays[attempt])
                         continue
                     
@@ -113,7 +158,10 @@ class Reviewer:
                 )
                 
                 if is_retryable and attempt < max_retries - 1:
-                    print(f"⚠️  评阅报告生成失败（可重试错误）: {e}，{retry_delays[attempt]}秒后重试... (尝试 {attempt + 1}/{max_retries})")
+                    if language == 'zh':
+                        print(f"⚠️  评阅报告生成失败（可重试错误）: {e}，{retry_delays[attempt]}秒后重试... (尝试 {attempt + 1}/{max_retries})")
+                    else:
+                        print(f"⚠️  Review generation failed (retryable error): {e}, retrying in {retry_delays[attempt]} seconds... (attempt {attempt + 1}/{max_retries})")
                     time.sleep(retry_delays[attempt])
                     continue
                 else:
@@ -126,6 +174,33 @@ class Reviewer:
         
         # 所有重试都失败，使用fallback
         return self._generate_fallback_review(structured_info, evaluation, innovation_analysis, language=language)
+
+    def review(self, structured_info: Dict[str, str], timeout: Optional[int] = None, language: str = 'en') -> str:
+        """
+        完整的评阅流程 V2
+        
+        Args:
+            structured_info: 结构化的论文信息
+            timeout: 超时时间（秒）
+            language: 语言，'zh'表示中文，'en'表示英文
+        
+        Returns:
+            Markdown格式的评阅报告
+        """
+        try:
+            # 1. 创新点分析
+            innovation_analysis = self.analyze_innovation(structured_info, timeout, language=language)
+            
+            # 2. 多维度评估
+            evaluation = self.evaluate(structured_info, innovation_analysis, timeout, language=language)
+            
+            # 3. 生成评阅报告
+            review = self.generate_review(structured_info, evaluation, innovation_analysis, timeout, language=language)
+            
+            return review
+        except Exception as e:
+            print(f"⚠️  评阅流程失败: {e}")
+            return self._generate_fallback_review(structured_info, "", "", language=language)
 
     def _generate_fallback_review(self, structured_info: Dict[str, str], evaluation: str, innovation_analysis: str, language: str = 'en') -> str:
         """生成备用评阅报告（当LLM生成失败时），利用已有的结构化信息"""
@@ -143,17 +218,21 @@ class Reviewer:
         
         # 从evaluation中提取评分信息（如果有）
         evaluation_scores = ""
-        if evaluation and "评分" in evaluation:
-            # 尝试从evaluation中提取评分部分
-            lines = evaluation.split('\n')
-            score_lines = [line for line in lines if any(keyword in line for keyword in ["评分", "Score", "Overall", "总体", "/10", "/5"])]
-            if score_lines:
-                evaluation_scores = "\n".join(score_lines[:10])  # 最多10行
+        if evaluation:
+            if language == 'zh' and "评分" in evaluation:
+                lines = evaluation.split('\n')
+                score_lines = [line for line in lines if any(keyword in line for keyword in ["评分", "Score", "Overall", "总体", "/10", "/5"])]
+                if score_lines:
+                    evaluation_scores = "\n".join(score_lines[:10])
+            elif language == 'en' and "Score" in evaluation:
+                lines = evaluation.split('\n')
+                score_lines = [line for line in lines if any(keyword in line for keyword in ["Score", "Overall", "/10", "/5"])]
+                if score_lines:
+                    evaluation_scores = "\n".join(score_lines[:10])
         
         # 从innovation_analysis中提取关键创新点
         innovation_summary = ""
         if innovation_analysis and len(innovation_analysis) > 50:
-            # 提取前200字符作为创新点摘要
             innovation_summary = innovation_analysis[:200] + "..." if len(innovation_analysis) > 200 else innovation_analysis
         
         if language == 'zh':
@@ -311,49 +390,4 @@ This paper presents research on **{title}**.
             minimal = raw_text[:400].strip() if raw_text else "Raw PDF text unavailable."
             parts.append(f"[Parser Warning] {error_msg}\n\n{minimal}")
         return "\n".join(parts)
-
-    def _format_related_papers(self, related_papers: list) -> str:
-        """格式化相关论文为文本"""
-        if not related_papers:
-            return "No related papers found."
-        
-        parts = []
-        # 处理可能是元组列表的情况
-        papers_to_format = related_papers
-        if related_papers and isinstance(related_papers[0], tuple):
-            papers_to_format = [paper for paper, _ in related_papers]
-        
-        for i, paper in enumerate(papers_to_format[:5], 1):
-            if isinstance(paper, dict):
-                title = paper.get('title', 'N/A')
-                abstract = paper.get('abstract', 'N/A')
-                parts.append(f"Paper {i}:\nTitle: {title}\nAbstract: {abstract}\n")
-        
-        return "\n".join(parts)
-
-    def review(self, structured_info: Dict[str, str], innovation_analysis: str, related_papers: list, timeout: Optional[int] = None, language: str = 'en') -> str:
-        """
-        完整的评阅流程
-        
-        Args:
-            structured_info: 结构化的论文信息
-            innovation_analysis: 创新点分析结果
-            related_papers: 相关论文列表
-            timeout: 超时时间（秒）
-            language: 语言，'zh'表示中文，'en'表示英文
-        
-        Returns:
-            Markdown格式的评阅报告
-        """
-        try:
-            # 1. 多维度评估
-            evaluation = self.evaluate(structured_info, innovation_analysis, related_papers, timeout, language=language)
-            
-            # 2. 生成评阅报告
-            review = self.generate_review(structured_info, evaluation, innovation_analysis, timeout, language=language)
-            
-            return review
-        except Exception as e:
-            print(f"⚠️  评阅流程失败: {e}")
-            return self._generate_fallback_review(structured_info, "", innovation_analysis, language=language)
 

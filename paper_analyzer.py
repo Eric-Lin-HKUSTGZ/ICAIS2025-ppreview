@@ -1,7 +1,7 @@
 """
 论文分析模块 - 关键信息提取、查询构建、语义相似度分析、创新点识别
 """
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 import numpy as np
 from llm_client import LLMClient
 from embedding_client import EmbeddingClient
@@ -328,6 +328,40 @@ class PaperAnalyzer:
     def has_core_content(self, structured_info: Dict[str, str]) -> bool:
         """判断结构化信息是否包含核心章节"""
         return any(structured_info.get(key) for key in self.CORE_SECTION_KEYS)
+    
+    def debug_core_content_check(self, structured_info: Dict[str, str]) -> Dict[str, Any]:
+        """
+        调试方法：详细检查核心章节字段，返回诊断信息
+        
+        Returns:
+            Dict包含：
+            - has_core_content: bool, 是否有核心内容
+            - core_sections_status: Dict[str, bool], 每个核心字段是否存在
+            - has_error: bool, 是否存在error字段
+            - error_message: str, error字段的内容（如果有）
+            - all_keys: List[str], structured_info中的所有键
+            - missing_core_sections: List[str], 缺失的核心章节字段
+        """
+        core_sections_status = {}
+        for key in self.CORE_SECTION_KEYS:
+            value = structured_info.get(key)
+            core_sections_status[key] = bool(value and value.strip())
+        
+        has_core = any(core_sections_status.values())
+        has_error = bool(structured_info.get("error"))
+        error_message = structured_info.get("error", "")
+        
+        missing_core_sections = [key for key, exists in core_sections_status.items() if not exists]
+        all_keys = list(structured_info.keys())
+        
+        return {
+            "has_core_content": has_core,
+            "core_sections_status": core_sections_status,
+            "has_error": has_error,
+            "error_message": error_message,
+            "all_keys": all_keys,
+            "missing_core_sections": missing_core_sections
+        }
 
     def _format_related_papers(self, related_papers: List[Dict]) -> str:
         """格式化相关论文为文本"""

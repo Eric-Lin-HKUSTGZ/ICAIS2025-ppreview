@@ -3,10 +3,13 @@ PDF解析模块 - 处理Base64编码的PDF，提取文本并进行结构化解�
 """
 import base64
 import io
-from typing import Dict, Optional
+import re
+from typing import Dict, Optional, Tuple
 import pdfplumber
 from llm_client import LLMClient
-from prompt_template import get_pdf_parse_prompt
+# 优先从v2版本导入，如果没有则从v1版本导入
+from prompt_template_v2 import get_pdf_parse_prompt
+# from prompt_template import get_pdf_parse_prompt
 from config import Config
 
 
@@ -129,58 +132,141 @@ class PDFParser:
             "raw_response": response
         }
         
-        # 尝试提取各个字段
+        # 尝试提取各个字段，包含英文和中文关键词
         sections = {
-            "Title": ["Title", "title"],
-            "Authors": ["Authors", "authors", "Author"],
-            "Abstract": ["Abstract", "abstract"],
-            "Keywords": ["Keywords", "keywords", "Keyword"],
-            "Introduction": ["Introduction", "introduction"],
-            "Methodology": ["Methodology", "methodology", "Method", "Methods"],
-            "Experiments": ["Experiments", "experiments", "Experimental", "Experiment"],
-            "Results": ["Results", "results", "Result"],
-            "Conclusion": ["Conclusion", "conclusions", "Conclusions"],
-            "References": ["References", "references", "Reference"],
-            "Paper Type": ["Paper Type", "paper type", "Type"],
-            "Core Contributions": ["Core Contributions", "contributions", "Contributions"],
-            "Technical Approach": ["Technical Approach", "technical approach", "Approach"]
+            "Title": ["Title", "title", "标题"],
+            "Authors": ["Authors", "authors", "Author", "作者"],
+            "Abstract": ["Abstract", "abstract", "摘要"],
+            "Keywords": ["Keywords", "keywords", "Keyword", "关键词"],
+            "Introduction": ["Introduction", "introduction", "引言"],
+            "Methodology": ["Methodology", "methodology", "Method", "Methods", "方法论", "方法"],
+            "Experiments": ["Experiments", "experiments", "Experimental", "Experiment", "实验"],
+            "Results": ["Results", "results", "Result", "结果"],
+            "Conclusion": ["Conclusion", "conclusions", "Conclusions", "结论"],
+            "References": ["References", "references", "Reference", "参考文献"],
+            "Paper Type": ["Paper Type", "paper type", "Type", "论文类型", "类型"],
+            "Core Contributions": ["Core Contributions", "contributions", "Contributions", "核心贡献", "贡献"],
+            "Technical Approach": ["Technical Approach", "technical approach", "Approach", "技术方法", "技术 approach"]
         }
         
         lines = response.split('\n')
         current_section = None
         current_content = []
+        matched_sections = []  # 用于debug：记录匹配到的section
+        
+        def normalize_line(line: str) -> str:
+            """标准化行：去除编号、Markdown格式等"""
+            # 去除开头的编号格式：1. 2. 3. 等
+            line = re.sub(r'^\d+\.\s*', '', line)
+            # 去除Markdown加粗：**text** -> text
+            line = re.sub(r'\*\*([^*]+)\*\*', r'\1', line)
+            # 去除其他Markdown格式
+            line = re.sub(r'^#+\s*', '', line)  # 去除标题标记
+            return line.strip()
+        
+        def match_section(line: str) -> Tuple[Optional[str], str]:
+            """
+            尝试匹配section，返回 (section_name, remaining_content)
+            如果匹配失败，返回 (None, None)
+            """
+            normalized = normalize_line(line)
+            
+            # 尝试匹配各个section
+            for section_name, keywords in sections.items():
+                for keyword in keywords:
+                    # 检查是否以关键词开头（可能跟着冒号、破折号等）
+                    # 使用不区分大小写的匹配
+                    pattern = rf'^{re.escape(keyword)}\s*[：:]\s*(.*)$'
+                    match = re.match(pattern, normalized, re.IGNORECASE)
+                    if match:
+                        return section_name, match.group(1).strip()
+                    
+                    # 也检查是否只包含关键词（后面可能换行）
+                    # 使用不区分大小写的比较
+                    keyword_lower = keyword.lower()
+                    normalized_lower = normalized.lower()
+                    if (normalized_lower == keyword_lower or 
+                        normalized_lower.startswith(keyword_lower + ' ') or 
+                        normalized_lower.startswith(keyword_lower + '：') or 
+                        normalized_lower.startswith(keyword_lower + ':')):
+                        # 从normalized中提取冒号后的内容
+                        colon_match = re.search(r'[：:]\s*(.*)$', normalized)
+                        if colon_match:
+                            return section_name, colon_match.group(1).strip()
+                        # 如果没有冒号，返回空内容（内容可能在下一行）
+                        return section_name, ""
+            
+            return None, None
         
         for line in lines:
             line_stripped = line.strip()
-            if not line_stripped:
-                continue
             
-            # 检查是否是新的section标题
-            found_section = False
-            for section_name, keywords in sections.items():
-                for keyword in keywords:
-                    if line_stripped.startswith(keyword) or line_stripped.startswith(f"**{keyword}"):
-                        # 保存之前的section
-                        if current_section:
-                            structured_info[current_section] = "\n".join(current_content).strip()
-                        # 开始新section
-                        current_section = section_name
-                        current_content = []
-                        # 提取该行的内容（去掉标题部分）
-                        content_part = line_stripped.split(':', 1)
-                        if len(content_part) > 1:
-                            current_content.append(content_part[1].strip())
-                        found_section = True
-                        break
-                if found_section:
-                    break
+            # 检查是否是新的section标题（即使行是空的，也要检查，因为空行可能是内容的一部分）
+            section_name, content = match_section(line_stripped) if line_stripped else (None, None)
             
-            if not found_section and current_section:
-                current_content.append(line_stripped)
+            if section_name:
+                # 保存之前的section（即使内容为空也要保存，因为可能后续会被填充）
+                if current_section:
+                    section_content = "\n".join(current_content).strip()
+                    # 只有当内容不为空时才保存，避免覆盖已有内容
+                    if section_content or current_section not in structured_info:
+                        structured_info[current_section] = section_content
+                
+                # 开始新section
+                current_section = section_name
+                current_content = []
+                matched_sections.append(section_name)  # 记录匹配
+                
+                # 如果有内容，添加到当前section
+                if content:
+                    current_content.append(content)
+                # 如果标题行没有内容，继续读取后续行（包括空行，因为空行可能是段落分隔）
+            elif current_section:
+                # 如果当前有section，将行添加到内容中
+                # 空行也保留，因为它们可能是段落分隔
+                if not line_stripped:
+                    # 空行：如果前一个内容不为空，保留空行作为段落分隔
+                    if current_content and current_content[-1].strip():
+                        current_content.append("")
+                else:
+                    # 非空行：过滤掉明显不是内容的行（如说明性文字）
+                    # 过滤规则：
+                    # 1. 以"- "开头且很短（<100字符）的行，通常是说明性文字
+                    # 2. 以"   -"开头（缩进的说明性文字）
+                    # 3. 以"  -"开头（缩进的说明性文字）
+                    # 4. 包含"未找到"或"Not found"的短行（可能是占位符）
+                    is_explanatory = (
+                        (line_stripped.startswith("- ") and len(line_stripped) < 100) or
+                        (line_stripped.startswith("   -") and len(line_stripped) < 100) or
+                        (line_stripped.startswith("  -") and len(line_stripped) < 100) or
+                        (line_stripped in ["未找到", "Not found", "N/A", "无"])
+                    )
+                    if not is_explanatory:
+                        current_content.append(line_stripped)
         
         # 保存最后一个section
         if current_section:
             structured_info[current_section] = "\n".join(current_content).strip()
+        
+        # Debug信息：记录解析结果
+        extracted_sections = [key for key in structured_info.keys() if key not in ["raw_response"]]
+        missing_core_sections = [key for key in ["Abstract", "Introduction", "Methodology", "Experiments", "Results", "Conclusion", "Core Contributions", "Technical Approach"] if key not in extracted_sections]
+        
+        print("\n" + "="*80)
+        print("[DEBUG] PDF解析器 - LLM响应解析结果")
+        print("="*80)
+        print(f"[DEBUG] 响应总行数: {len(lines)}")
+        print(f"[DEBUG] 成功匹配的section: {matched_sections}")
+        print(f"[DEBUG] 提取到的所有字段: {extracted_sections}")
+        print(f"[DEBUG] 缺失的核心章节字段: {missing_core_sections}")
+        if missing_core_sections:
+            print(f"[DEBUG] ⚠️ 警告: 以下核心章节字段未能从LLM响应中提取: {missing_core_sections}")
+            print(f"[DEBUG] 可能原因: LLM输出格式不符合预期，或使用了不同的关键词")
+            # 显示前10行，帮助诊断格式问题
+            print(f"[DEBUG] 响应前10行预览:")
+            for i, line in enumerate(lines[:10], 1):
+                print(f"  {i}: {line[:100]}")
+        print("="*80 + "\n")
         
         return structured_info
 
